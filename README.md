@@ -11,6 +11,7 @@ A side-by-side comparison tool for benchmarking the three parsing options availa
 - **Upload & Benchmark**: Upload any document (PDF, DOCX, etc.) and parse it using all three methods in parallel
 - **Progressive Results**: See results for each parsing method as soon as it completes (no waiting for all three)
 - **Side-by-Side Comparison**: View parsed passages from each method in a 3-column layout
+- **Parallel Search**: Semantic search across all three parsed files simultaneously, comparing results side-by-side
 - **Markdown Rendering**: Tables are rendered with proper markdown formatting via remark-gfm
 - **Performance Metrics**: Track processing time, passage count, and status for each method
 - **History**: Local browser persistence of benchmark runs
@@ -102,6 +103,7 @@ The app uses a **proxy model** where the frontend initiates each parsing method 
 | `/api/botpress/methods/:method/start` | POST | Start a single parsing method |
 | `/api/botpress/files/:id/status` | GET | Poll file status (for progressive updates) |
 | `/api/botpress/files/:id/passages` | GET | Fetch passages for a completed file |
+| `/api/botpress/search` | GET | Parallel semantic search across all three methods |
 
 ## Tech Stack
 
@@ -119,6 +121,17 @@ bun dev      # Start development server with hot reload
 bun start    # Start production server
 bun build    # Build for production
 ```
+
+## Deployment
+
+The app is deployed on [Render](https://render.com) with native Bun support.
+
+**Environment variables required:**
+- `BOTPRESS_TOKEN`
+- `BOTPRESS_BOT_ID`
+
+Build command: `bun install`
+Start command: `bun start`
 
 ## Project Structure
 
