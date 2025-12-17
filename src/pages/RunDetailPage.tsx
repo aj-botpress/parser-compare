@@ -6,6 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+} from '@/components/ui/dialog'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -15,10 +20,11 @@ import {
   FileText,
   Copy,
   Check,
+  Search,
 } from 'lucide-react'
 import { useNavigate } from '@/lib/router'
 import { getRunById, updateMethodInHistory, type HistoryEntry } from '@/lib/history'
-import type { MethodResult, Passage, FileStatusResponse } from '../server/types'
+import type { MethodResult, Passage, FileStatusResponse, SearchPassage } from '../server/types'
 
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_TIME_MS = 5 * 60 * 1000 // 5 minutes
@@ -41,6 +47,14 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
 
   // Copy state
   const [copiedMethod, setCopiedMethod] = useState<string | null>(null)
+
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchResults, setSearchResults] = useState<Record<string, SearchPassage[]>>({})
+  const [isSearching, setIsSearching] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [lastQuery, setLastQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Polling refs
   const pollTimersRef = useRef<Record<string, NodeJS.Timeout>>({})
@@ -202,6 +216,58 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
     return `${(ms / 1000).toFixed(1)}s`
   }
 
+  // Execute search
+  const executeSearch = async () => {
+    const query = searchInputRef.current?.value?.trim()
+    if (!query || !runId) return
+
+    setIsSearching(true)
+    setHasSearched(true)
+    setLastQuery(query)
+
+    try {
+      const res = await fetch(
+        `/api/botpress/search?q=${encodeURIComponent(query)}&runId=${encodeURIComponent(runId)}&limit=10`
+      )
+
+      if (!res.ok) {
+        console.error('Search failed')
+        return
+      }
+
+      const data = await res.json()
+
+      // Convert results array to record by method
+      const resultsByMethod: Record<string, SearchPassage[]> = {}
+      for (const r of data.results) {
+        resultsByMethod[r.method] = r.passages || []
+      }
+      setSearchResults(resultsByMethod)
+    } catch (e) {
+      console.error('Search error:', e)
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  // Close search and reset
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setSearchResults({})
+    setHasSearched(false)
+    setLastQuery('')
+    if (searchInputRef.current) {
+      searchInputRef.current.value = ''
+    }
+  }
+
+  // Method labels for display
+  const methodLabels: Record<string, string> = {
+    basic: 'Basic',
+    vision: 'Vision',
+    'landing-ai': 'Landing AI',
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -234,19 +300,114 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
 
   return (
     <div className="space-y-3">
-      {/* Header with back button */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back
-        </Button>
-        <div>
-          <h2 className="font-semibold">{run.originalFile.name}</h2>
-          <p className="text-sm text-muted-foreground">
-            {new Date(run.startedAt).toLocaleString()}
-          </p>
+      {/* Header with back button and search */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <div>
+            <h2 className="font-semibold">{run.originalFile.name}</h2>
+            <p className="text-sm text-muted-foreground">
+              {new Date(run.startedAt).toLocaleString()}
+            </p>
+          </div>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search className="h-4 w-4 text-muted-foreground" />
+        </Button>
       </div>
+
+      {/* Search Modal */}
+      <Dialog open={searchOpen} onOpenChange={(open) => !open && closeSearch()}>
+        <DialogContent className="max-w-5xl h-[80vh] flex flex-col p-0 gap-0">
+          {/* Search Input */}
+          <div className="px-4 py-3 border-b">
+            <div className="flex items-center gap-3">
+              <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+              <input
+                ref={searchInputRef}
+                autoFocus
+                placeholder="Search passages..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') executeSearch()
+                }}
+                className="flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+            {!hasSearched && (
+              <p className="text-xs text-muted-foreground mt-2 ml-7">
+                Press Enter to search
+              </p>
+            )}
+          </div>
+
+          {/* Results Grid */}
+          {hasSearched && (
+            <div className="flex-1 min-h-0">
+              <div className="grid grid-cols-3 h-full divide-x">
+                {(['basic', 'vision', 'landing-ai'] as const).map((method) => (
+                  <div key={method} className="flex flex-col h-full min-h-0">
+                    {/* Column Header */}
+                    <div className="px-4 py-2 border-b bg-muted/30 shrink-0">
+                      <span className="font-medium text-sm">{methodLabels[method]}</span>
+                      {searchResults[method] && (
+                        <span className="text-xs text-muted-foreground ml-2">
+                          {searchResults[method].length} results
+                        </span>
+                      )}
+                    </div>
+                    {/* Results */}
+                    <ScrollArea className="flex-1 min-h-0">
+                      <div className="p-4 space-y-4">
+                        {isSearching ? (
+                          <div className="flex flex-col items-center justify-center py-8">
+                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            <span className="text-sm text-muted-foreground mt-2">Searching...</span>
+                          </div>
+                        ) : searchResults[method]?.length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-8">
+                            No matches for "{lastQuery}"
+                          </p>
+                        ) : (
+                          searchResults[method]?.map((result, i) => (
+                            <div key={i} className="space-y-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-mono font-medium text-primary">
+                                  {Math.round(result.score * 100)}%
+                                </span>
+                                {result.meta.pageNumber !== undefined && (
+                                  <span className="text-xs text-muted-foreground">
+                                    p.{result.meta.pageNumber}
+                                  </span>
+                                )}
+                                {result.meta.subtype && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                    {result.meta.subtype}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm leading-relaxed line-clamp-4">
+                                {result.content}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Side-by-side comparison */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">

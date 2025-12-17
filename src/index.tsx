@@ -1,7 +1,7 @@
 import { serve } from 'bun'
 import index from './index.html'
 import { hasCredentials } from './server/botpressClient'
-import { runBenchmark, getFilePassages, startMethod, getFileStatus, METHODS } from './server/benchmark'
+import { runBenchmark, getFilePassages, startMethod, getFileStatus, searchFilesByMethod, METHODS } from './server/benchmark'
 import type { HealthResponse } from './server/types'
 
 const server = serve({
@@ -93,18 +93,23 @@ const server = serve({
 
           const formData = await req.formData()
           const file = formData.get('file') as File | null
+          const runId = formData.get('runId') as string | null
 
           if (!file) {
             return Response.json({ error: 'No file provided' }, { status: 400 })
+          }
+
+          if (!runId) {
+            return Response.json({ error: 'No runId provided' }, { status: 400 })
           }
 
           const fileBuffer = await file.arrayBuffer()
           const fileName = file.name
           const contentType = file.type || 'application/octet-stream'
 
-          console.log(`[API] Starting ${methodName} for ${fileName} (${fileBuffer.byteLength} bytes)`)
+          console.log(`[API] Starting ${methodName} for ${fileName} (${fileBuffer.byteLength} bytes) runId=${runId}`)
 
-          const result = await startMethod(fileBuffer, fileName, contentType, methodName)
+          const result = await startMethod(fileBuffer, fileName, contentType, methodName, runId)
 
           console.log(`[API] ${methodName} started: fileId=${result.fileId}`)
 
@@ -134,6 +139,46 @@ const server = serve({
           console.error('[API] Get status error:', error)
           return Response.json(
             { error: error instanceof Error ? error.message : 'Failed to get status' },
+            { status: 500 }
+          )
+        }
+      },
+    },
+
+    // Parallel search across all methods
+    '/api/botpress/search': {
+      async GET(req) {
+        try {
+          const url = new URL(req.url)
+          const query = url.searchParams.get('q')
+          const runId = url.searchParams.get('runId')
+          const limit = parseInt(url.searchParams.get('limit') || '10', 10)
+
+          if (!query || !runId) {
+            return Response.json({ error: 'Missing query or runId' }, { status: 400 })
+          }
+
+          console.log(`[API] Searching for "${query}" in run ${runId}`)
+
+          // Search all 3 methods in parallel
+          const methods = ['basic', 'vision', 'landing-ai']
+          const results = await Promise.all(
+            methods.map(async (method) => {
+              try {
+                const passages = await searchFilesByMethod(query, runId, method, limit)
+                return { method, passages }
+              } catch (error) {
+                console.error(`[API] Search error for ${method}:`, error)
+                return { method, passages: [], error: error instanceof Error ? error.message : 'Search failed' }
+              }
+            })
+          )
+
+          return Response.json({ query, results })
+        } catch (error) {
+          console.error('[API] Search error:', error)
+          return Response.json(
+            { error: error instanceof Error ? error.message : 'Search failed' },
             { status: 500 }
           )
         }

@@ -85,6 +85,7 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
       const startPromises = METHODS.map(async (method) => {
         const formData = new FormData()
         formData.append('file', selectedFile)
+        formData.append('runId', runId)
 
         const res = await fetch(`/api/botpress/methods/${method}/start`, {
           method: 'POST',

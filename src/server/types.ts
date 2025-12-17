@@ -101,3 +101,23 @@ export interface FileStatusResponse {
   }
 }
 
+// Search types
+
+export interface SearchPassage {
+  content: string
+  score: number
+  meta: PassageMeta
+  fileId: string
+}
+
+export interface SearchMethodResult {
+  method: string
+  passages: SearchPassage[]
+  error?: string
+}
+
+export interface ParallelSearchResponse {
+  query: string
+  results: SearchMethodResult[]
+}
+

@@ -8,6 +8,7 @@ import type {
   StartMethodResponse,
   FileStatusResponse,
   MethodJobStatus,
+  SearchPassage,
 } from './types'
 
 export const METHODS: MethodConfig[] = [
@@ -287,7 +288,8 @@ export async function startMethod(
   fileBuffer: ArrayBuffer,
   fileName: string,
   contentType: string,
-  methodName: string
+  methodName: string,
+  runId: string
 ): Promise<StartMethodResponse> {
   const client = getBotpressClient()
   const method = getMethodConfig(methodName)
@@ -299,12 +301,16 @@ export async function startMethod(
   const key = `benchmark-${method.name}-${Date.now()}-${fileName}`
   const startedAt = new Date().toISOString()
 
-  // 1. Create file entry with indexing config
+  // 1. Create file entry with indexing config and tags for search
   const { file } = await client.upsertFile({
     key,
     size: fileBuffer.byteLength,
     index: true,
     contentType,
+    tags: {
+      benchmarkRun: runId,
+      parsingMethod: method.name,
+    },
     indexing: {
       configuration: method.config as any,
     },
@@ -392,3 +398,25 @@ export async function getFileStatus(
   return response
 }
 
+// Search function for parallel file search
+export async function searchFilesByMethod(
+  query: string,
+  runId: string,
+  methodName: string,
+  limit: number = 10
+): Promise<SearchPassage[]> {
+  const client = getBotpressClient()
+
+  const response = await client.searchFiles({
+    query,
+    tags: { benchmarkRun: runId, parsingMethod: methodName },
+    limit,
+  })
+
+  return response.passages.map((p) => ({
+    content: p.content,
+    score: p.score,
+    meta: (p.meta || {}) as PassageMeta,
+    fileId: p.file.id,
+  }))
+}
