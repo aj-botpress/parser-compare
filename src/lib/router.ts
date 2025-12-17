@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useSyncExternalStore } from 'react'
 
 export type Route =
   | { page: 'home' }
@@ -20,25 +20,35 @@ export function parseRoute(pathname: string): Route {
   return { page: 'not-found' }
 }
 
+// Simple event emitter for route changes
+const listeners = new Set<() => void>()
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function getSnapshot(): string {
+  return window.location.pathname
+}
+
+function notifyListeners(): void {
+  listeners.forEach((listener) => listener())
+}
+
 export function navigate(path: string): void {
   window.history.pushState({}, '', path)
-  // Dispatch a custom event so useRoute can react
-  window.dispatchEvent(new PopStateEvent('popstate'))
+  notifyListeners()
+}
+
+// Handle browser back/forward
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', notifyListeners)
 }
 
 export function useRoute(): Route {
-  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname))
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setRoute(parseRoute(window.location.pathname))
-    }
-
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
-
-  return route
+  const pathname = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  return parseRoute(pathname)
 }
 
 export function useNavigate(): (path: string) => void {
@@ -46,4 +56,3 @@ export function useNavigate(): (path: string) => void {
     navigate(path)
   }, [])
 }
-

@@ -2,7 +2,14 @@ import { useState, useCallback, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import {
   Upload,
   Play,
@@ -11,14 +18,11 @@ import {
   CheckCircle2,
   XCircle,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useNavigate } from '@/lib/router'
-import {
-  addToHistory,
-  getHistorySummaries,
-  type HistorySummary,
-} from '@/lib/history'
+import { addToHistory, clearHistory, type HistorySummary } from '@/lib/history'
 import type { BenchmarkRunResult } from '../server/types'
 
 interface HomePageProps {
@@ -100,6 +104,12 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
     }
   }
 
+  // Clear history
+  const handleClearHistory = () => {
+    clearHistory()
+    onHistoryChange()
+  }
+
   // Format file size
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
@@ -108,141 +118,186 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-      {/* Main content - Upload */}
-      <div className="space-y-6">
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-base font-medium">Upload Document</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Dropzone */}
-            <div
-              className={cn(
-                'border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer',
-                isDragging
-                  ? 'border-primary bg-primary/5'
-                  : 'border-muted-foreground/25 hover:border-muted-foreground/50',
-                selectedFile && 'border-primary/50 bg-primary/5'
-              )}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept=".pdf,.doc,.docx,.txt,.md"
-                onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
-              />
-              {selectedFile ? (
-                <div className="flex items-center justify-center gap-3">
-                  <FileText className="h-8 w-8 text-primary" />
-                  <div className="text-left">
-                    <p className="font-medium">{selectedFile.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatSize(selectedFile.size)}
-                    </p>
-                  </div>
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Upload Card */}
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base font-medium">Upload Document</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Dropzone */}
+          <div
+            className={cn(
+              'border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer',
+              isDragging
+                ? 'border-primary bg-primary/5'
+                : 'border-muted-foreground/25 hover:border-muted-foreground/50',
+              selectedFile && 'border-primary/50 bg-primary/5'
+            )}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.txt,.md"
+              onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
+            />
+            {selectedFile ? (
+              <div className="flex items-center justify-center gap-3">
+                <FileText className="h-8 w-8 text-primary" />
+                <div className="text-left">
+                  <p className="font-medium">{selectedFile.name}</p>
+                  <p className="text-sm text-muted-foreground">{formatSize(selectedFile.size)}</p>
                 </div>
-              ) : (
-                <>
-                  <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    Drag & drop a file here, or click to select
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">PDF, DOC, DOCX, TXT, MD</p>
-                </>
-              )}
-            </div>
-
-            {/* Benchmark button */}
-            <div className="flex gap-2">
-              <Button
-                onClick={runBenchmark}
-                disabled={!selectedFile || isRunning || healthStatus !== 'configured'}
-                className="flex-1"
-              >
-                {isRunning ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4 mr-2" />
-                )}
-                {isRunning ? 'Running Benchmark...' : 'Run Benchmark'}
-              </Button>
-            </div>
-
-            {error && (
-              <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded">
-                {error}
               </div>
-            )}
-
-            {healthStatus !== 'configured' && healthStatus !== 'loading' && (
-              <div className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded">
-                Configure BOTPRESS_TOKEN and BOTPRESS_BOT_ID in .env to enable benchmarking.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* History sidebar */}
-      <div>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">History</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ScrollArea className="h-[calc(100vh-280px)]">
-              {historySummaries.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8 px-4">
-                  No benchmark history yet
+            ) : (
+              <>
+                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  Drag & drop a file here, or click to select
                 </p>
-              ) : (
-                <div className="divide-y divide-border">
-                  {historySummaries.map((entry) => (
-                    <button
+                <p className="text-xs text-muted-foreground mt-1">PDF, DOC, DOCX, TXT, MD</p>
+              </>
+            )}
+          </div>
+
+          {/* Benchmark button */}
+          <Button
+            onClick={runBenchmark}
+            disabled={!selectedFile || isRunning || healthStatus !== 'configured'}
+            className="w-full"
+          >
+            {isRunning ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4 mr-2" />
+            )}
+            {isRunning ? 'Running Benchmark...' : 'Run Benchmark'}
+          </Button>
+
+          {error && (
+            <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded">
+              {error}
+            </div>
+          )}
+
+          {healthStatus !== 'configured' && healthStatus !== 'loading' && (
+            <div className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded">
+              Configure BOTPRESS_TOKEN and BOTPRESS_BOT_ID in .env to enable benchmarking.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* History Table */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base font-medium">History</CardTitle>
+            {historySummaries.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={handleClearHistory}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {historySummaries.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No benchmark history yet
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>File</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Basic</TableHead>
+                  <TableHead>Vision</TableHead>
+                  <TableHead>Landing AI</TableHead>
+                  <TableHead className="w-[60px]">AI</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historySummaries.map((entry) => {
+                  const basic = entry.methods.find((m) => m.method === 'basic')
+                  const vision = entry.methods.find((m) => m.method === 'vision')
+                  const landingAi = entry.methods.find((m) => m.method === 'landing-ai')
+
+                  return (
+                    <TableRow
                       key={entry.runId}
-                      className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors"
+                      className="cursor-pointer"
                       onClick={() => navigate(`/runs/${entry.runId}`)}
                     >
-                      <div className="font-medium text-sm truncate">{entry.fileName}</div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {new Date(entry.startedAt).toLocaleString()}
-                      </div>
-                      <div className="flex gap-1 mt-2">
-                        {entry.methods.map((m) => (
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <span className="truncate max-w-[200px]">{entry.fileName}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(entry.startedAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>
+                        {basic && (
                           <Badge
-                            key={m.method}
-                            variant={m.status === 'indexing_completed' ? 'success' : 'destructive'}
-                            className="text-[10px] px-1.5 py-0"
+                            variant={basic.status === 'indexing_completed' ? 'success' : 'destructive'}
                           >
-                            {m.status === 'indexing_completed' ? (
-                              <CheckCircle2 className="h-2 w-2 mr-0.5" />
+                            {basic.status === 'indexing_completed' ? (
+                              <CheckCircle2 className="h-3 w-3" />
                             ) : (
-                              <XCircle className="h-2 w-2 mr-0.5" />
+                              <XCircle className="h-3 w-3" />
                             )}
-                            {m.label.charAt(0)}
-                          </Badge>
-                        ))}
-                        {entry.hasAiComparison && (
-                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                            <Sparkles className="h-2 w-2" />
                           </Badge>
                         )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      </div>
+                      </TableCell>
+                      <TableCell>
+                        {vision && (
+                          <Badge
+                            variant={vision.status === 'indexing_completed' ? 'success' : 'destructive'}
+                          >
+                            {vision.status === 'indexing_completed' ? (
+                              <CheckCircle2 className="h-3 w-3" />
+                            ) : (
+                              <XCircle className="h-3 w-3" />
+                            )}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {landingAi && (
+                          <Badge
+                            variant={landingAi.status === 'indexing_completed' ? 'success' : 'destructive'}
+                          >
+                            {landingAi.status === 'indexing_completed' ? (
+                              <CheckCircle2 className="h-3 w-3" />
+                            ) : (
+                              <XCircle className="h-3 w-3" />
+                            )}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {entry.hasAiComparison && (
+                          <Badge variant="secondary">
+                            <Sparkles className="h-3 w-3" />
+                          </Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
-
