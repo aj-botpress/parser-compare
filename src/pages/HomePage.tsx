@@ -22,8 +22,10 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useNavigate } from '@/lib/router'
-import { addToHistory, clearHistory, type HistorySummary } from '@/lib/history'
-import type { BenchmarkRunResult } from '../server/types'
+import { clearHistory, createPendingEntry, type HistorySummary } from '@/lib/history'
+import type { StartMethodResponse } from '../server/types'
+
+const METHODS = ['basic', 'vision', 'landing-ai'] as const
 
 interface HomePageProps {
   healthStatus: 'loading' | 'configured' | 'missing_credentials' | 'error'
@@ -68,37 +70,61 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
     setIsDragging(false)
   }, [])
 
-  // Run benchmark
+  // Run benchmark - starts all methods in parallel
   const runBenchmark = async () => {
     if (!selectedFile) return
 
     setIsRunning(true)
     setError(null)
 
-    try {
-      const formData = new FormData()
-      formData.append('file', selectedFile)
+    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const startedAt = new Date().toISOString()
 
-      const res = await fetch('/api/botpress/benchmark', {
-        method: 'POST',
-        body: formData,
+    try {
+      // Start all 3 methods in parallel
+      const startPromises = METHODS.map(async (method) => {
+        const formData = new FormData()
+        formData.append('file', selectedFile)
+
+        const res = await fetch(`/api/botpress/methods/${method}/start`, {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error || `Failed to start ${method}`)
+        }
+
+        return res.json() as Promise<StartMethodResponse>
       })
 
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Benchmark failed')
-      }
+      const results = await Promise.all(startPromises)
 
-      const result: BenchmarkRunResult = await res.json()
+      // Create pending history entry with all fileIds
+      createPendingEntry({
+        runId,
+        startedAt,
+        originalFile: {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          contentType: selectedFile.type || 'application/octet-stream',
+        },
+        methods: results.map((r) => ({
+          method: r.method,
+          label: r.label,
+          fileId: r.fileId,
+          status: 'indexing_pending',
+          startedAt: r.startedAt,
+        })),
+      })
 
-      // Save to history
-      addToHistory(result)
       onHistoryChange()
 
-      // Navigate to detail page
-      navigate(`/runs/${result.runId}`)
+      // Navigate to detail page immediately
+      navigate(`/runs/${runId}`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Benchmark failed')
+      setError(e instanceof Error ? e.message : 'Failed to start benchmark')
     } finally {
       setIsRunning(false)
     }
@@ -246,41 +272,17 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
                       </TableCell>
                       <TableCell>
                         {basic && (
-                          <Badge
-                            variant={basic.status === 'indexing_completed' ? 'success' : 'destructive'}
-                          >
-                            {basic.status === 'indexing_completed' ? (
-                              <CheckCircle2 className="h-3 w-3" />
-                            ) : (
-                              <XCircle className="h-3 w-3" />
-                            )}
-                          </Badge>
+                          <StatusBadge status={basic.status} />
                         )}
                       </TableCell>
                       <TableCell>
                         {vision && (
-                          <Badge
-                            variant={vision.status === 'indexing_completed' ? 'success' : 'destructive'}
-                          >
-                            {vision.status === 'indexing_completed' ? (
-                              <CheckCircle2 className="h-3 w-3" />
-                            ) : (
-                              <XCircle className="h-3 w-3" />
-                            )}
-                          </Badge>
+                          <StatusBadge status={vision.status} />
                         )}
                       </TableCell>
                       <TableCell>
                         {landingAi && (
-                          <Badge
-                            variant={landingAi.status === 'indexing_completed' ? 'success' : 'destructive'}
-                          >
-                            {landingAi.status === 'indexing_completed' ? (
-                              <CheckCircle2 className="h-3 w-3" />
-                            ) : (
-                              <XCircle className="h-3 w-3" />
-                            )}
-                          </Badge>
+                          <StatusBadge status={landingAi.status} />
                         )}
                       </TableCell>
                       <TableCell>
@@ -299,5 +301,42 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// Helper component for status badges
+function StatusBadge({ status }: { status: string }) {
+  const isComplete = status === 'indexing_completed'
+  const isPending = status === 'upload_pending' || status === 'indexing_pending'
+  const isTimeout = status === 'timeout'
+
+  if (isPending) {
+    return (
+      <Badge variant="secondary">
+        <Loader2 className="h-3 w-3 animate-spin" />
+      </Badge>
+    )
+  }
+
+  if (isComplete) {
+    return (
+      <Badge variant="success">
+        <CheckCircle2 className="h-3 w-3" />
+      </Badge>
+    )
+  }
+
+  if (isTimeout) {
+    return (
+      <Badge variant="warning">
+        <XCircle className="h-3 w-3" />
+      </Badge>
+    )
+  }
+
+  return (
+    <Badge variant="destructive">
+      <XCircle className="h-3 w-3" />
+    </Badge>
   )
 }

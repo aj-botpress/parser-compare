@@ -1,7 +1,16 @@
 import { getBotpressClient } from './botpressClient'
-import type { MethodConfig, MethodResult, BenchmarkRunResult, Passage, PassageMeta } from './types'
+import type {
+  MethodConfig,
+  MethodResult,
+  BenchmarkRunResult,
+  Passage,
+  PassageMeta,
+  StartMethodResponse,
+  FileStatusResponse,
+  MethodJobStatus,
+} from './types'
 
-const METHODS: MethodConfig[] = [
+export const METHODS: MethodConfig[] = [
   {
     name: 'basic',
     label: 'Basic',
@@ -266,5 +275,120 @@ export async function getFilePassages(
   }
 }
 
-export { METHODS }
+// ============================================================
+// Proxy model functions - for independent method execution
+// ============================================================
+
+export function getMethodConfig(methodName: string): MethodConfig | undefined {
+  return METHODS.find((m) => m.name === methodName)
+}
+
+export async function startMethod(
+  fileBuffer: ArrayBuffer,
+  fileName: string,
+  contentType: string,
+  methodName: string
+): Promise<StartMethodResponse> {
+  const client = getBotpressClient()
+  const method = getMethodConfig(methodName)
+
+  if (!method) {
+    throw new Error(`Unknown method: ${methodName}`)
+  }
+
+  const key = `benchmark-${method.name}-${Date.now()}-${fileName}`
+  const startedAt = new Date().toISOString()
+
+  // 1. Create file entry with indexing config
+  const { file } = await client.upsertFile({
+    key,
+    size: fileBuffer.byteLength,
+    index: true,
+    contentType,
+    indexing: {
+      configuration: method.config as any,
+    },
+  })
+
+  // 2. Upload the actual file content
+  const uploadUrl = (file as any).uploadUrl
+  if (!uploadUrl) {
+    throw new Error('No uploadUrl returned from upsertFile')
+  }
+
+  await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: fileBuffer,
+  })
+
+  // Return immediately - don't wait for indexing
+  return {
+    fileId: file.id,
+    method: method.name,
+    label: method.label,
+    startedAt,
+  }
+}
+
+export async function getFileStatus(
+  fileId: string,
+  startedAt?: string
+): Promise<FileStatusResponse> {
+  const client = getBotpressClient()
+
+  const { file } = await client.getFile({ id: fileId })
+  const fileData = file as any
+
+  // Map Botpress status to our status
+  const status: MethodJobStatus = fileData.status
+
+  const response: FileStatusResponse = {
+    fileId,
+    status,
+  }
+
+  // Add failure reason if applicable
+  if (status === 'indexing_failed' || status === 'upload_failed') {
+    response.failedReason = fileData.failedStatusReason || 'Unknown error'
+  }
+
+  // If completed, fetch passages and compute metrics
+  if (status === 'indexing_completed') {
+    const passages = await getAllPassages(client, fileId)
+
+    const contentCharsTotal = passages.reduce((sum, p) => sum + p.content.length, 0)
+
+    const byType: Record<string, number> = {}
+    const bySubtype: Record<string, number> = {}
+    const pageNumbers = new Set<number>()
+
+    for (const p of passages) {
+      if (p.meta.type) {
+        byType[p.meta.type] = (byType[p.meta.type] || 0) + 1
+      }
+      if (p.meta.subtype) {
+        bySubtype[p.meta.subtype] = (bySubtype[p.meta.subtype] || 0) + 1
+      }
+      if (p.meta.pageNumber !== undefined) {
+        pageNumbers.add(p.meta.pageNumber)
+      }
+    }
+
+    // Calculate processing time if startedAt was provided
+    if (startedAt) {
+      response.processingTimeMs = Date.now() - new Date(startedAt).getTime()
+    }
+
+    response.passageCount = passages.length
+    response.contentCharsTotal = contentCharsTotal
+    response.metaBreakdown = {
+      byType,
+      bySubtype,
+      pageCount: pageNumbers.size,
+    }
+  }
+
+  return response
+}
 

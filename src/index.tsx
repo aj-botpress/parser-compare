@@ -1,8 +1,7 @@
 import { serve } from 'bun'
 import index from './index.html'
 import { hasCredentials } from './server/botpressClient'
-import { runBenchmark, getFilePassages } from './server/benchmark'
-import { runAiComparison } from './server/aiCompare'
+import { runBenchmark, getFilePassages, startMethod, getFileStatus, METHODS } from './server/benchmark'
 import type { HealthResponse } from './server/types'
 
 const server = serve({
@@ -74,32 +73,67 @@ const server = serve({
       },
     },
 
-    // AI comparison endpoint (user-triggered)
-    '/api/botpress/ai-compare': {
+    // ============================================================
+    // Proxy model endpoints - for independent method execution
+    // ============================================================
+
+    // Start a single parsing method
+    '/api/botpress/methods/:method/start': {
       async POST(req) {
         try {
-          const body = await req.json()
-          const { runId, fileIds, instructions } = body as {
-            runId: string
-            fileIds: { basic: string; vision: string; landingAi: string }
-            instructions?: string
+          const methodName = req.params.method
+          const validMethods = METHODS.map((m) => m.name)
+
+          if (!validMethods.includes(methodName as any)) {
+            return Response.json(
+              { error: `Invalid method: ${methodName}. Valid methods: ${validMethods.join(', ')}` },
+              { status: 400 }
+            )
           }
 
-          if (!runId || !fileIds?.basic || !fileIds?.vision || !fileIds?.landingAi) {
-            return Response.json({ error: 'Missing runId or fileIds' }, { status: 400 })
+          const formData = await req.formData()
+          const file = formData.get('file') as File | null
+
+          if (!file) {
+            return Response.json({ error: 'No file provided' }, { status: 400 })
           }
 
-          console.log(`[API] Running AI comparison for ${runId}...`)
+          const fileBuffer = await file.arrayBuffer()
+          const fileName = file.name
+          const contentType = file.type || 'application/octet-stream'
 
-          const result = await runAiComparison(runId, fileIds, instructions)
+          console.log(`[API] Starting ${methodName} for ${fileName} (${fileBuffer.byteLength} bytes)`)
 
-          console.log(`[API] AI comparison completed`)
+          const result = await startMethod(fileBuffer, fileName, contentType, methodName)
+
+          console.log(`[API] ${methodName} started: fileId=${result.fileId}`)
 
           return Response.json(result)
         } catch (error) {
-          console.error('[API] AI compare error:', error)
+          console.error('[API] Start method error:', error)
           return Response.json(
-            { error: error instanceof Error ? error.message : 'AI comparison failed' },
+            { error: error instanceof Error ? error.message : 'Failed to start method' },
+            { status: 500 }
+          )
+        }
+      },
+    },
+
+    // Get file status (for polling)
+    '/api/botpress/files/:id/status': {
+      async GET(req) {
+        try {
+          const fileId = req.params.id
+          const url = new URL(req.url)
+          const startedAt = url.searchParams.get('startedAt') || undefined
+
+          const result = await getFileStatus(fileId, startedAt)
+
+          return Response.json(result)
+        } catch (error) {
+          console.error('[API] Get status error:', error)
+          return Response.json(
+            { error: error instanceof Error ? error.message : 'Failed to get status' },
             { status: 500 }
           )
         }

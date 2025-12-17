@@ -54,14 +54,22 @@
 
 .prose h1 {
   font-size: 1.5em;
+  display: block;
 }
 
 .prose h2 {
   font-size: 1.25em;
+  display: block;
 }
 
 .prose h3 {
   font-size: 1.125em;
+  display: block;
+}
+
+.prose h4 {
+  font-size: 1em;
+  display: block;
 }
 
 .prose p {

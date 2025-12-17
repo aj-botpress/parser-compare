@@ -1,4 +1,4 @@
-import type { BenchmarkRunResult, AiComparisonResult, MethodResult } from '../server/types'
+import type { BenchmarkRunResult, AiComparisonResult, MethodResult, MethodJobStatus } from '../server/types'
 
 const STORAGE_KEY = 'parser-benchmark-history'
 const MAX_HISTORY_ITEMS = 25
@@ -54,6 +54,102 @@ export function updateHistoryWithAiComparison(
     }
   } catch (e) {
     console.error('Failed to update history with AI comparison:', e)
+  }
+}
+
+// ============================================================
+// Proxy model support - for progressive updates
+// ============================================================
+
+export interface PendingMethod {
+  method: string
+  label: string
+  fileId: string
+  status: MethodJobStatus
+  startedAt: string
+}
+
+export interface PendingHistoryEntry {
+  runId: string
+  startedAt: string
+  originalFile: {
+    name: string
+    size: number
+    contentType: string
+  }
+  methods: PendingMethod[]
+}
+
+export function createPendingEntry(entry: PendingHistoryEntry): void {
+  try {
+    const history = getHistory()
+
+    // Convert pending methods to partial MethodResult format
+    const historyEntry: HistoryEntry = {
+      runId: entry.runId,
+      startedAt: entry.startedAt,
+      completedAt: '', // Will be set when all complete
+      originalFile: entry.originalFile,
+      methods: entry.methods.map((m) => ({
+        method: m.method,
+        label: m.label,
+        fileId: m.fileId,
+        status: m.status as any, // Allow pending statuses
+        processingTimeMs: 0,
+        passageCount: 0,
+        contentCharsTotal: 0,
+        metaBreakdown: { byType: {}, bySubtype: {}, pageCount: 0 },
+        sampleText: '',
+        startedAt: m.startedAt, // Extra field for timing
+      })) as any,
+    }
+
+    // Add to beginning, remove duplicates by runId
+    const filtered = history.filter((h) => h.runId !== entry.runId)
+    const updated = [historyEntry, ...filtered].slice(0, MAX_HISTORY_ITEMS)
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+  } catch (e) {
+    console.error('Failed to create pending entry:', e)
+  }
+}
+
+export function updateMethodInHistory(
+  runId: string,
+  methodName: string,
+  update: Partial<MethodResult> & { status: string }
+): void {
+  try {
+    const history = getHistory()
+    const index = history.findIndex((h) => h.runId === runId)
+
+    if (index >= 0) {
+      const methodIndex = history[index].methods.findIndex((m) => m.method === methodName)
+      if (methodIndex >= 0) {
+        // Merge the update into the existing method
+        history[index].methods[methodIndex] = {
+          ...history[index].methods[methodIndex],
+          ...update,
+        }
+
+        // Check if all methods are complete
+        const allComplete = history[index].methods.every(
+          (m) =>
+            m.status === 'indexing_completed' ||
+            m.status === 'indexing_failed' ||
+            m.status === 'upload_failed' ||
+            m.status === 'timeout'
+        )
+
+        if (allComplete && !history[index].completedAt) {
+          history[index].completedAt = new Date().toISOString()
+        }
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history))
+      }
+    }
+  } catch (e) {
+    console.error('Failed to update method in history:', e)
   }
 }
 

@@ -1,21 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   ArrowLeft,
-  Sparkles,
   CheckCircle2,
   XCircle,
   Clock,
@@ -24,10 +16,12 @@ import {
   Copy,
   Check,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { useNavigate } from '@/lib/router'
-import { getRunById, updateHistoryWithAiComparison, type HistoryEntry } from '@/lib/history'
-import type { MethodResult, AiComparisonResult, Passage } from '../server/types'
+import { getRunById, updateMethodInHistory, type HistoryEntry } from '@/lib/history'
+import type { MethodResult, Passage, FileStatusResponse } from '../server/types'
+
+const POLL_INTERVAL_MS = 2000
+const MAX_POLL_TIME_MS = 5 * 60 * 1000 // 5 minutes
 
 interface RunDetailPageProps {
   runId: string
@@ -41,55 +35,152 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
   const [run, setRun] = useState<HistoryEntry | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Passages for each method
+  // Method-specific state
+  const [methodStatuses, setMethodStatuses] = useState<Record<string, string>>({})
   const [passages, setPassages] = useState<Record<string, Passage[]>>({})
-  const [loadingPassages, setLoadingPassages] = useState(true)
 
   // Copy state
   const [copiedMethod, setCopiedMethod] = useState<string | null>(null)
 
-  // AI Compare state
-  const [showAiCompareDialog, setShowAiCompareDialog] = useState(false)
-  const [isRunningAiCompare, setIsRunningAiCompare] = useState(false)
-  const [aiComparison, setAiComparison] = useState<AiComparisonResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Polling refs
+  const pollTimersRef = useRef<Record<string, NodeJS.Timeout>>({})
+  const pollStartTimesRef = useRef<Record<string, number>>({})
 
   // Load run from history
   useEffect(() => {
     const entry = getRunById(runId)
     setRun(entry)
-    setAiComparison(entry?.aiComparison || null)
     setLoading(false)
+
+    // Initialize method statuses from history
+    if (entry) {
+      const statuses: Record<string, string> = {}
+      for (const m of entry.methods) {
+        statuses[m.method] = m.status
+      }
+      setMethodStatuses(statuses)
+    }
   }, [runId])
 
-  // Load passages for all methods
+  // Fetch passages for a completed method
+  const fetchPassagesForMethod = useCallback(async (fileId: string, methodName: string) => {
+    try {
+      const res = await fetch(`/api/botpress/files/${fileId}/passages?limit=200`)
+      if (res.ok) {
+        const data = await res.json()
+        setPassages((prev) => ({ ...prev, [methodName]: data.passages || [] }))
+      }
+    } catch (e) {
+      console.error(`Failed to load passages for ${methodName}:`, e)
+    }
+  }, [])
+
+  // Poll a single method's status
+  const pollMethodStatus = useCallback(
+    async (method: MethodResult & { startedAt?: string }) => {
+      const methodName = method.method
+      const fileId = method.fileId
+      const startedAt = (method as any).startedAt
+
+      if (!fileId) return
+
+      // Check for timeout
+      const pollStart = pollStartTimesRef.current[methodName] || Date.now()
+      if (Date.now() - pollStart > MAX_POLL_TIME_MS) {
+        // Mark as timeout
+        setMethodStatuses((prev) => ({ ...prev, [methodName]: 'timeout' }))
+        updateMethodInHistory(runId, methodName, {
+          status: 'timeout',
+          failedReason: 'Indexing timed out after 5 minutes',
+        })
+        onHistoryChange()
+        return
+      }
+
+      try {
+        const url = startedAt
+          ? `/api/botpress/files/${fileId}/status?startedAt=${encodeURIComponent(startedAt)}`
+          : `/api/botpress/files/${fileId}/status`
+
+        const res = await fetch(url)
+        if (!res.ok) {
+          console.error(`Failed to poll status for ${methodName}`)
+          return
+        }
+
+        const status: FileStatusResponse = await res.json()
+
+        // Update local state
+        setMethodStatuses((prev) => ({ ...prev, [methodName]: status.status }))
+
+        // If still processing, schedule next poll
+        if (status.status === 'upload_pending' || status.status === 'indexing_pending') {
+          pollTimersRef.current[methodName] = setTimeout(() => {
+            pollMethodStatus(method)
+          }, POLL_INTERVAL_MS)
+          return
+        }
+
+        // Method finished - update history
+        updateMethodInHistory(runId, methodName, {
+          status: status.status,
+          failedReason: status.failedReason,
+          passageCount: status.passageCount,
+          contentCharsTotal: status.contentCharsTotal,
+          processingTimeMs: status.processingTimeMs,
+          metaBreakdown: status.metaBreakdown,
+        })
+
+        // Refresh run data from history
+        const updatedRun = getRunById(runId)
+        if (updatedRun) {
+          setRun(updatedRun)
+        }
+
+        onHistoryChange()
+
+        // If completed, fetch passages
+        if (status.status === 'indexing_completed') {
+          fetchPassagesForMethod(fileId, methodName)
+        }
+      } catch (e) {
+        console.error(`Error polling ${methodName}:`, e)
+      }
+    },
+    [runId, onHistoryChange, fetchPassagesForMethod]
+  )
+
+  // Start polling for pending methods
   useEffect(() => {
     if (!run) return
 
-    const loadAllPassages = async () => {
-      setLoadingPassages(true)
-      const allPassages: Record<string, Passage[]> = {}
+    for (const method of run.methods) {
+      const status = method.status
+      const isPending = status === 'upload_pending' || status === 'indexing_pending'
 
-      for (const m of run.methods) {
-        if (m.fileId && m.status === 'indexing_completed') {
-          try {
-            const res = await fetch(`/api/botpress/files/${m.fileId}/passages?limit=200`)
-            if (res.ok) {
-              const data = await res.json()
-              allPassages[m.method] = data.passages || []
-            }
-          } catch (e) {
-            console.error(`Failed to load passages for ${m.method}:`, e)
-          }
+      if (isPending && method.fileId) {
+        // Initialize poll start time
+        if (!pollStartTimesRef.current[method.method]) {
+          pollStartTimesRef.current[method.method] = Date.now()
         }
-      }
 
-      setPassages(allPassages)
-      setLoadingPassages(false)
+        // Start polling if not already polling
+        if (!pollTimersRef.current[method.method]) {
+          pollMethodStatus(method)
+        }
+      } else if (status === 'indexing_completed' && method.fileId && !passages[method.method]) {
+        // Load passages for already-completed methods
+        fetchPassagesForMethod(method.fileId, method.method)
+      }
     }
 
-    loadAllPassages()
-  }, [run])
+    // Cleanup on unmount
+    return () => {
+      for (const timer of Object.values(pollTimersRef.current)) {
+        clearTimeout(timer)
+      }
+    }
+  }, [run, passages, pollMethodStatus, fetchPassagesForMethod])
 
   // Copy all passages for a method
   const copyPassages = async (method: string) => {
@@ -102,50 +193,6 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
       setTimeout(() => setCopiedMethod(null), 2000)
     } catch (e) {
       console.error('Failed to copy:', e)
-    }
-  }
-
-  // Run AI comparison
-  const runAiComparison = async () => {
-    if (!run) return
-
-    const fileIds = {
-      basic: run.methods.find((m) => m.method === 'basic')?.fileId || '',
-      vision: run.methods.find((m) => m.method === 'vision')?.fileId || '',
-      landingAi: run.methods.find((m) => m.method === 'landing-ai')?.fileId || '',
-    }
-
-    if (!fileIds.basic || !fileIds.vision || !fileIds.landingAi) {
-      setError('Cannot run AI comparison: some methods failed')
-      return
-    }
-
-    setIsRunningAiCompare(true)
-    setShowAiCompareDialog(false)
-    setError(null)
-
-    try {
-      const res = await fetch('/api/botpress/ai-compare', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId: run.runId, fileIds }),
-      })
-
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'AI comparison failed')
-      }
-
-      const comparison: AiComparisonResult = await res.json()
-      setAiComparison(comparison)
-
-      // Update history with AI comparison
-      updateHistoryWithAiComparison(run.runId, comparison)
-      onHistoryChange()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'AI comparison failed')
-    } finally {
-      setIsRunningAiCompare(false)
     }
   }
 
@@ -187,65 +234,31 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
 
   return (
     <div className="space-y-3">
-      {/* Header with back button and AI Compare */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-          <div>
-            <h2 className="font-semibold">{run.originalFile.name}</h2>
-            <p className="text-sm text-muted-foreground">
-              {new Date(run.startedAt).toLocaleString()}
-            </p>
-          </div>
-        </div>
-
-        <Button
-          variant="outline"
-          onClick={() => setShowAiCompareDialog(true)}
-          disabled={isRunningAiCompare || !!aiComparison}
-        >
-          {isRunningAiCompare ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Sparkles className="h-4 w-4 mr-2" />
-          )}
-          {aiComparison ? 'AI Compared' : 'AI Compare'}
+      {/* Header with back button */}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back
         </Button>
-      </div>
-
-      {error && (
-        <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded">
-          {error}
+        <div>
+          <h2 className="font-semibold">{run.originalFile.name}</h2>
+          <p className="text-sm text-muted-foreground">
+            {new Date(run.startedAt).toLocaleString()}
+          </p>
         </div>
-      )}
-
-      {/* AI Comparison result */}
-      {aiComparison && (
-        <Card className="bg-primary/5 border-primary/20">
-          <CardContent className="py-4">
-            <div className="flex items-start gap-4">
-              <Sparkles className="h-5 w-5 text-primary mt-0.5" />
-              <div className="flex-1 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">AI Recommendation:</span>
-                  <Badge variant="default">{aiComparison.recommendedMethod}</Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">{aiComparison.summary}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      </div>
 
       {/* Side-by-side comparison */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {methods.map((methodKey) => {
           const methodResult = run.methods.find((m) => m.method === methodKey)
           const methodPassages = passages[methodKey] || []
-          const isComplete = methodResult?.status === 'indexing_completed'
+          // Use live status from polling, fallback to stored status
+          const currentStatus = methodStatuses[methodKey] || methodResult?.status
+          const isComplete = currentStatus === 'indexing_completed'
+          const isProcessing = currentStatus === 'upload_pending' || currentStatus === 'indexing_pending'
+          const isFailed = currentStatus === 'indexing_failed' || currentStatus === 'upload_failed'
+          const isTimeout = currentStatus === 'timeout'
 
           return (
             <Card key={methodKey} className="flex flex-col">
@@ -270,12 +283,17 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   {methodResult && (
                     <>
-                      {isComplete ? (
+                      {isProcessing ? (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                          <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
+                          {currentStatus === 'upload_pending' ? 'Uploading' : 'Indexing'}
+                        </Badge>
+                      ) : isComplete ? (
                         <Badge variant="success" className="text-[10px] px-1.5 py-0">
                           <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
                           Done
                         </Badge>
-                      ) : methodResult.status === 'timeout' ? (
+                      ) : isTimeout ? (
                         <Badge variant="warning" className="text-[10px] px-1.5 py-0">
                           <Clock className="h-2.5 w-2.5 mr-0.5" />
                           Timeout
@@ -286,10 +304,14 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                           Failed
                         </Badge>
                       )}
-                      <Separator orientation="vertical" className="h-3" />
-                      <span>{formatTime(methodResult.processingTimeMs)}</span>
-                      <Separator orientation="vertical" className="h-3" />
-                      <span>{methodResult.passageCount} passages</span>
+                      {isComplete && (
+                        <>
+                          <Separator orientation="vertical" className="h-3" />
+                          <span>{formatTime(methodResult.processingTimeMs)}</span>
+                          <Separator orientation="vertical" className="h-3" />
+                          <span>{methodResult.passageCount} passages</span>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -299,14 +321,24 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
               <CardContent className="flex-1 p-0">
                 <ScrollArea className="h-[calc(100vh-280px)]">
                   <div className="p-4 space-y-4">
-                    {loadingPassages ? (
+                    {isProcessing ? (
+                      <div className="flex flex-col items-center justify-center py-12 gap-3">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        <p className="text-sm text-muted-foreground">
+                          {currentStatus === 'upload_pending' ? 'Uploading file...' : 'Indexing document...'}
+                        </p>
+                      </div>
+                    ) : isFailed || isTimeout ? (
+                      <div className="flex flex-col items-center justify-center py-12 gap-2">
+                        <XCircle className="h-8 w-8 text-destructive" />
+                        <p className="text-sm text-muted-foreground text-center">
+                          {methodResult?.failedReason || (isTimeout ? 'Timed out after 5 minutes' : 'Method failed')}
+                        </p>
+                      </div>
+                    ) : !isComplete ? (
                       <div className="flex items-center justify-center py-12">
                         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                       </div>
-                    ) : !isComplete ? (
-                      <p className="text-sm text-muted-foreground text-center py-12">
-                        {methodResult?.failedReason || 'Method failed'}
-                      </p>
                     ) : methodPassages.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-12">
                         No passages found
@@ -324,9 +356,9 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                               </span>
                             )}
                           </div>
-                          {/* Passage content with markdown rendering */}
-                          <div className="prose prose-sm prose-invert max-w-none text-sm leading-relaxed">
-                            <Markdown>{p.content}</Markdown>
+                          {/* Passage content with markdown for tables */}
+                          <div className="prose prose-sm max-w-none leading-relaxed">
+                            <Markdown remarkPlugins={[remarkGfm]}>{p.content}</Markdown>
                           </div>
                         </div>
                       ))
@@ -338,28 +370,6 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
           )
         })}
       </div>
-
-      {/* AI Compare confirmation dialog */}
-      <Dialog open={showAiCompareDialog} onOpenChange={setShowAiCompareDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Run AI Comparison?</DialogTitle>
-            <DialogDescription>
-              This will call Zai to analyze and compare the three parsing results. This may incur
-              cost depending on your Botpress plan.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAiCompareDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={runAiComparison}>
-              <Sparkles className="h-4 w-4 mr-2" />
-              Run AI Compare
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

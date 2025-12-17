@@ -69,3 +69,35 @@ export interface HealthResponse {
   hasToken: boolean
 }
 
+// Proxy model types
+
+export type MethodJobStatus =
+  | 'upload_pending'
+  | 'indexing_pending'
+  | 'indexing_completed'
+  | 'indexing_failed'
+  | 'upload_failed'
+  | 'timeout'
+
+export interface StartMethodResponse {
+  fileId: string
+  method: string
+  label: string
+  startedAt: string
+}
+
+export interface FileStatusResponse {
+  fileId: string
+  status: MethodJobStatus
+  failedReason?: string
+  // Only included when completed:
+  passageCount?: number
+  contentCharsTotal?: number
+  processingTimeMs?: number
+  metaBreakdown?: {
+    byType: Record<string, number>
+    bySubtype: Record<string, number>
+    pageCount: number
+  }
+}
+
