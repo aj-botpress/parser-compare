@@ -5,6 +5,7 @@ import { runBenchmark, getFilePassages, startMethod, getFileStatus, searchFilesB
 import type { HealthResponse } from './server/types'
 
 const server = serve({
+  port: process.env.PORT || 3000,
   routes: {
     // Health check endpoint
     '/api/botpress/health': {

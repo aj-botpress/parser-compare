@@ -190,8 +190,9 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
 
     // Cleanup on unmount
     return () => {
-      for (const timer of Object.values(pollTimersRef.current)) {
-        clearTimeout(timer)
+      for (const key of Object.keys(pollTimersRef.current)) {
+        clearTimeout(pollTimersRef.current[key])
+        delete pollTimersRef.current[key]  // Clear ref so polling can restart
       }
     }
   }, [run, passages, pollMethodStatus, fetchPassagesForMethod])
