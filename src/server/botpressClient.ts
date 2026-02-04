@@ -14,6 +14,7 @@ export function getBotpressClient(): Client {
     clientInstance = new Client({
       token,
       botId,
+      apiUrl: process.env.BOTPRESS_API_URL,
     })
   }
 

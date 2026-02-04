@@ -1,7 +1,7 @@
 // Shared types for benchmark responses
 
 export interface MethodConfig {
-  name: 'basic' | 'vision' | 'landing-ai'
+  name: 'no-vision' | 'vision' | 'landing-ai'
   label: string
   config: Record<string, unknown>
 }

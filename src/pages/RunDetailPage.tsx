@@ -21,6 +21,7 @@ import {
   Copy,
   Check,
   Search,
+  Tag,
 } from 'lucide-react'
 import { useNavigate } from '@/lib/router'
 import { getRunById, updateMethodInHistory, type HistoryEntry } from '@/lib/history'
@@ -47,6 +48,9 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
 
   // Copy state
   const [copiedMethod, setCopiedMethod] = useState<string | null>(null)
+
+  // Display options
+  const [showMetadata, setShowMetadata] = useState(true)
 
   // Search state
   const [searchOpen, setSearchOpen] = useState(false)
@@ -264,9 +268,9 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
 
   // Method labels for display
   const methodLabels: Record<string, string> = {
-    basic: 'Basic',
-    vision: 'Vision',
-    'landing-ai': 'Landing AI',
+    'no-vision': 'Standard',
+    vision: 'Vision (Gemini 3)',
+    'landing-ai': 'ADE (Agentic)',
   }
 
   if (loading) {
@@ -297,7 +301,7 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
     )
   }
 
-  const methods = ['basic', 'vision', 'landing-ai']
+  const methods = ['no-vision', 'vision', 'landing-ai']
 
   return (
     <div className="space-y-3">
@@ -315,14 +319,25 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
             </p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0"
-          onClick={() => setSearchOpen(true)}
-        >
-          <Search className="h-4 w-4 text-muted-foreground" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-8 w-8 p-0 ${showMetadata ? '' : 'opacity-50'}`}
+            onClick={() => setShowMetadata(!showMetadata)}
+            title={showMetadata ? 'Hide metadata labels' : 'Show metadata labels'}
+          >
+            <Tag className="h-4 w-4 text-muted-foreground" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={() => setSearchOpen(true)}
+          >
+            <Search className="h-4 w-4 text-muted-foreground" />
+          </Button>
+        </div>
       </div>
 
       {/* Search Modal */}
@@ -353,7 +368,7 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
           {hasSearched && (
             <div className="flex-1 min-h-0">
               <div className="grid grid-cols-3 h-full divide-x">
-                {(['basic', 'vision', 'landing-ai'] as const).map((method) => (
+                {(['no-vision', 'vision', 'landing-ai'] as const).map((method) => (
                   <div key={method} className="flex flex-col h-full min-h-0">
                     {/* Column Header */}
                     <div className="px-4 py-2 border-b bg-muted/30 shrink-0">
@@ -383,12 +398,12 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                                 <span className="text-xs font-mono font-medium text-primary">
                                   {Math.round(result.score * 100)}%
                                 </span>
-                                {result.meta.pageNumber !== undefined && (
+                                {showMetadata && result.meta.pageNumber !== undefined && (
                                   <span className="text-xs text-muted-foreground">
                                     p.{result.meta.pageNumber}
                                   </span>
                                 )}
-                                {result.meta.subtype && (
+                                {showMetadata && result.meta.subtype && (
                                   <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                                     {result.meta.subtype}
                                   </Badge>
@@ -509,15 +524,17 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                       methodPassages.map((p, i) => (
                         <div key={p.id} className="space-y-1">
                           {/* Passage label */}
-                          <div className="text-xs text-primary font-medium">
-                            {i + 1}
-                            {p.meta.subtype && ` - ${capitalize(p.meta.subtype)}`}
-                            {p.meta.pageNumber !== undefined && (
-                              <span className="text-muted-foreground ml-2">
-                                Page {p.meta.pageNumber}
-                              </span>
-                            )}
-                          </div>
+                          {showMetadata && (
+                            <div className="text-xs text-primary font-medium">
+                              {i + 1}
+                              {p.meta.subtype && ` - ${capitalize(p.meta.subtype)}`}
+                              {p.meta.pageNumber !== undefined && (
+                                <span className="text-muted-foreground ml-2">
+                                  Page {p.meta.pageNumber}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {/* Passage content with markdown for tables */}
                           <div className="prose prose-sm max-w-none leading-relaxed">
                             <Markdown remarkPlugins={[remarkGfm]}>{p.content}</Markdown>

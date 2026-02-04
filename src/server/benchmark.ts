@@ -13,22 +13,24 @@ import type {
 
 export const METHODS: MethodConfig[] = [
   {
-    name: 'basic',
-    label: 'Basic',
-    config: {},
+    name: 'no-vision',
+    label: 'Standard',
+    config: {
+      parsing: { engine: 'standard' },
+    },
   },
   {
     name: 'vision',
-    label: 'Vision',
+    label: 'Vision (Gemini 3)',
     config: {
-      vision: { transcribePages: true },
+      parsing: { engine: 'vision' },
     },
   },
   {
     name: 'landing-ai',
-    label: 'Landing AI',
+    label: 'ADE (Agentic)',
     config: {
-      parsing: { mode: 'agent' },
+      parsing: { engine: 'ade' },
     },
   },
 ]

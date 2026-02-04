@@ -162,7 +162,7 @@ const server = serve({
           console.log(`[API] Searching for "${query}" in run ${runId}`)
 
           // Search all 3 methods in parallel
-          const methods = ['basic', 'vision', 'landing-ai']
+          const methods = ['no-vision', 'vision', 'landing-ai']
           const results = await Promise.all(
             methods.map(async (method) => {
               try {

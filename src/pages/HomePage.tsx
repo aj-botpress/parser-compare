@@ -25,7 +25,7 @@ import { useNavigate } from '@/lib/router'
 import { clearHistory, createPendingEntry, type HistorySummary } from '@/lib/history'
 import type { StartMethodResponse } from '../server/types'
 
-const METHODS = ['basic', 'vision', 'landing-ai'] as const
+const METHODS = ['no-vision', 'vision', 'landing-ai'] as const
 
 interface HomePageProps {
   healthStatus: 'loading' | 'configured' | 'missing_credentials' | 'error'
@@ -244,15 +244,15 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
                 <TableRow>
                   <TableHead>File</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Basic</TableHead>
+                  <TableHead>Standard</TableHead>
                   <TableHead>Vision</TableHead>
-                  <TableHead>Landing AI</TableHead>
+                  <TableHead>ADE</TableHead>
                   <TableHead className="w-[60px]">AI</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {historySummaries.map((entry) => {
-                  const basic = entry.methods.find((m) => m.method === 'basic')
+                  const standard = entry.methods.find((m) => m.method === 'no-vision')
                   const vision = entry.methods.find((m) => m.method === 'vision')
                   const landingAi = entry.methods.find((m) => m.method === 'landing-ai')
 
@@ -272,8 +272,8 @@ export function HomePage({ healthStatus, onHistoryChange, historySummaries }: Ho
                         {new Date(entry.startedAt).toLocaleDateString()}
                       </TableCell>
                       <TableCell>
-                        {basic && (
-                          <StatusBadge status={basic.status} />
+                        {standard && (
+                          <StatusBadge status={standard.status} />
                         )}
                       </TableCell>
                       <TableCell>
