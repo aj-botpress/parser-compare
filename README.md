@@ -19,11 +19,11 @@ A side-by-side comparison tool for benchmarking the three parsing options availa
 
 ## Parsing Methods
 
-| Method | Description | Requirements |
-|--------|-------------|--------------|
-| **Basic** | Default text extraction | None |
-| **Vision** | LLM page transcription (`vision.transcribePages: true`) | Paid plan |
-| **Landing AI** | Agentic parsing (`parsing.mode: 'agent'`) | Paid plan + feature flag |
+| Method | Description | Config |
+|--------|-------------|--------|
+| **Standard** | Default text extraction | `parsing.engine: 'standard'` |
+| **Vision (Gemini 3)** | LLM page transcription | `parsing.engine: 'vision'` |
+| **ADE (Agentic)** | Agentic document extraction | `parsing.engine: 'ade'` |
 
 ## Prerequisites
 
