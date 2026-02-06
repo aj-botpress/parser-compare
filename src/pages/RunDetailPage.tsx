@@ -393,7 +393,7 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                           </p>
                         ) : (
                           searchResults[method]?.map((result, i) => (
-                            <div key={i} className="space-y-1.5">
+                            <div key={i} className="rounded-md border bg-muted/30 p-3 space-y-2">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs font-mono font-medium text-primary">
                                   {Math.round(result.score * 100)}%
@@ -409,9 +409,9 @@ export function RunDetailPage({ runId, onHistoryChange }: RunDetailPageProps) {
                                   </Badge>
                                 )}
                               </div>
-                              <p className="text-sm leading-relaxed line-clamp-4">
-                                {result.content}
-                              </p>
+                              <div className="prose prose-sm max-w-none text-sm leading-relaxed">
+                                <Markdown remarkPlugins={[remarkGfm]}>{result.content}</Markdown>
+                              </div>
                             </div>
                           ))
                         )}
